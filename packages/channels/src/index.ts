@@ -121,6 +121,26 @@ export interface ChannelConfig {
   [key: string]: unknown;
 }
 
+export interface WecomRouteConfig extends ChannelConfig {
+  webhookPath?: string;
+  accounts?: Record<
+    string,
+    {
+      webhookPath?: string;
+    }
+  >;
+}
+
+export interface WecomAppRouteConfig extends ChannelConfig {
+  webhookPath?: string;
+  accounts?: Record<
+    string,
+    {
+      webhookPath?: string;
+    }
+  >;
+}
+
 /**
  * Moltbot 配置接口（符合官方约定）
  * 配置路径: channels.<id>.enabled
@@ -129,8 +149,8 @@ export interface MoltbotConfig {
   channels?: {
     dingtalk?: ChannelConfig;
     "feishu-china"?: ChannelConfig;
-    wecom?: ChannelConfig;
-    "wecom-app"?: ChannelConfig;
+    wecom?: WecomRouteConfig;
+    "wecom-app"?: WecomAppRouteConfig;
     qqbot?: ChannelConfig;
     qq?: ChannelConfig;
     [key: string]: ChannelConfig | undefined;

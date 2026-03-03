@@ -3,13 +3,6 @@
 ## Project Purpose
 Moltbot China is an open-source extension set that adds China-region messaging channels to Moltbot (Feishu, DingTalk, WeCom, QQ). The goal is to provide simple, reliable chat connectivity and a clean plugin surface for Moltbot users in China, with voice features implemented via Node.
 
-## Docs To Use
-- Plugin development: `doc/moltbot/moltbot-plugin.md`
-- Plugin manifest: `doc/moltbot/moltbot-plugin-manifest.md`
-- Channels overview and targets: `doc/moltbot/moltbot-channels.md`
-- Agent tools: `doc/moltbot/moltbot-agent-tools.md`
-- Reference implementations: `doc/reference-projects/`
-- Architecture design: `doc/architecture.md`
 
 ## Project Structure
 
@@ -51,24 +44,11 @@ openclaw-china/
 │               └── common.ts
 │
 ├── extensions/
-│   └── dingtalk/                    # @openclaw-china/dingtalk
-│       ├── clawdbot.plugin.json
-│       ├── moltbot.plugin.json
-│       ├── package.json
-│       ├── tsconfig.json
-│       ├── index.ts
-│       └── src/
-│           ├── channel.ts           # ChannelPlugin 实现
-│           ├── client.ts            # Stream SDK 封装
-│           ├── logger.ts            # 日志封装
-│           ├── bot.ts               # 消息处理
-│           ├── monitor.ts           # Stream 连接
-│           ├── send.ts              # 发送消息
-│           ├── media.ts             # 媒体处理
-│           ├── outbound.ts          # 出站适配器
-│           ├── runtime.ts           # 运行时管理
-│           ├── config.ts            # 配置 schema
-│           └── types.ts
+│   ├── dingtalk/                    # @openclaw-china/dingtalk
+│   ├── feishu/                      # @openclaw-china/feishu-china
+│   ├── wecom/                       # @openclaw-china/wecom
+│   ├── wecom-app/                   # @openclaw-china/wecom-app
+│   └── qqbot/                       # @openclaw-china/qqbot
 │
 └── doc/
     ├── architecture.md              # 架构设计文档
@@ -96,6 +76,23 @@ openclaw-china/
 - Avoid `any`; use `unknown` with type guards when needed.
 - Handle errors at async boundaries; never swallow silently.
 - Set timeouts on network requests.
+
+## Release & Versioning
+- Use `pnpm release:all` for full release, or `pnpm release:channel --channel <id>` for single channel release.
+- Default publish tag is `latest`.
+- Only publish to `next` when explicitly passing `--tag next`.
+- `--version` accepts:
+  - `x.y.z` (stable semver, publishes as-is)
+  - `x.y.z.w` (legacy 4-segment input, normalized to npm semver `x.y.z-w`)
+  - `x.y.z-w` (npm prerelease style)
+- Auto bump rules (when `--version` is omitted):
+  - Baseline is the higher one between local `package.json` version and npm published versions.
+  - If baseline is `x.y.z`, next is `x.y.(z+1)`.
+  - If baseline is `x.y.z.w` / `x.y.z-w`, next is `x.y.z.(w+1)` (published as `x.y.z-(w+1)`).
+- Version comparison in release script uses numeric `major.minor.patch.revision` ordering (missing revision = `0`).
+- Recommended commands:
+  - Stable release (latest): `pnpm release:all --version 2026.3.5`
+  - Pre-release to next: `pnpm release:all --version 2026.3.5.1 --tag next`
 
 ## Safety
 - Treat all inbound messages as untrusted input.

@@ -21,9 +21,9 @@ function printUsage() {
 Usage:
   node scripts/release-all.mjs
   node scripts/release-all.mjs <channel>
-  node scripts/release-all.mjs --version <x.y.z>
-  node scripts/release-all.mjs --channel <channel> [--with-shared]
-  node scripts/release-all.mjs --channel <channel> --version <x.y.z> [--with-shared]
+  node scripts/release-all.mjs --version <x.y.z|x.y.z.w> [--tag <latest|next>]
+  node scripts/release-all.mjs --channel <channel> [--with-shared] [--tag <latest|next>]
+  node scripts/release-all.mjs --channel <channel> --version <x.y.z|x.y.z.w> [--with-shared] [--tag <latest|next>]
 
 Channels:
   ${channelIds.join(", ")}
@@ -31,6 +31,8 @@ Channels:
 Options:
   --with-shared    Also bump & publish @openclaw-china/shared
   --version        Use a fixed version instead of auto patch bump
+  --tag            npm dist-tag to publish with (latest|next, default: latest)
+                   Note: x.y.z.w will be normalized to npm semver x.y.z-w
 `);
 }
 
@@ -38,6 +40,7 @@ function parseArgs(args) {
   let channel = null;
   let withShared = false;
   let version = null;
+  let tag = "latest";
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -67,6 +70,18 @@ function parseArgs(args) {
       i += 1;
       continue;
     }
+    if (arg === "--tag" || arg === "-t") {
+      const next = args[i + 1];
+      if (!next) {
+        throw new Error("Missing tag after --tag");
+      }
+      if (next !== "latest" && next !== "next") {
+        throw new Error(`Invalid tag: ${next}. Use "latest" or "next".`);
+      }
+      tag = next;
+      i += 1;
+      continue;
+    }
     if (!arg.startsWith("-") && !channel) {
       channel = arg;
       continue;
@@ -79,6 +94,7 @@ function parseArgs(args) {
     channel,
     withShared,
     version,
+    tag,
   };
 }
 
@@ -91,42 +107,45 @@ function writeJson(p, data) {
 }
 
 function bumpPatch(version) {
-  const parts = version.split(".");
-  if (parts.length !== 3) {
-    throw new Error(`Invalid version: ${version}`);
+  const parsed = parseVersion(version);
+  if (parsed.hasRevision) {
+    return `${parsed.major}.${parsed.minor}.${parsed.patch}-${parsed.revision + 1}`;
   }
-  const [major, minor, patch] = parts.map((p) => Number(p));
-  if (!Number.isInteger(major) || !Number.isInteger(minor) || !Number.isInteger(patch)) {
-    throw new Error(`Invalid version: ${version}`);
-  }
-  return `${major}.${minor}.${patch + 1}`;
+  return `${parsed.major}.${parsed.minor}.${parsed.patch + 1}`;
 }
 
 function run(cmd, cwd = root) {
   execSync(cmd, { stdio: "inherit", cwd });
 }
 
+function publishPackage(pkgDir, tag) {
+  run(`npm publish --access public --tag ${tag}`, pkgDir);
+}
+
 function parseVersion(version) {
-  const parts = version.split(".");
-  if (parts.length !== 3) {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:([.-])([0-9]+))?$/);
+  if (!match) {
     throw new Error(`Invalid version: ${version}`);
   }
-  const [major, minor, patch] = parts.map((p) => Number(p));
-  if (!Number.isInteger(major) || !Number.isInteger(minor) || !Number.isInteger(patch)) {
-    throw new Error(`Invalid version: ${version}`);
-  }
-  return { major, minor, patch };
+  const [, majorRaw, minorRaw, patchRaw, separatorRaw, revisionRaw] = match;
+  const major = Number(majorRaw);
+  const minor = Number(minorRaw);
+  const patch = Number(patchRaw);
+  const revision = revisionRaw === undefined ? 0 : Number(revisionRaw);
+  const hasRevision = separatorRaw !== undefined;
+  return { major, minor, patch, revision, hasRevision };
 }
 
 function compareVersions(a, b) {
   if (a.major !== b.major) return a.major - b.major;
   if (a.minor !== b.minor) return a.minor - b.minor;
-  return a.patch - b.patch;
+  if (a.patch !== b.patch) return a.patch - b.patch;
+  return a.revision - b.revision;
 }
 
 function getLatestPublishedVersion(pkgName) {
   try {
-    const result = execSync(`npm view ${pkgName} version --json`, {
+    const result = execSync(`npm view ${pkgName} versions --json`, {
       cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
     })
@@ -134,9 +153,23 @@ function getLatestPublishedVersion(pkgName) {
       .trim();
     if (!result) return null;
     const parsed = JSON.parse(result);
-    if (typeof parsed === "string") return parsed;
-    if (Array.isArray(parsed) && parsed.length > 0) return parsed[parsed.length - 1];
-    return null;
+    const versions = Array.isArray(parsed) ? parsed : typeof parsed === "string" ? [parsed] : [];
+    if (versions.length === 0) return null;
+    let latest = null;
+    let latestParsed = null;
+    for (const version of versions) {
+      let candidateParsed;
+      try {
+        candidateParsed = parseVersion(version);
+      } catch {
+        continue;
+      }
+      if (!latestParsed || compareVersions(candidateParsed, latestParsed) > 0) {
+        latest = version;
+        latestParsed = candidateParsed;
+      }
+    }
+    return latest;
   } catch (error) {
     const stderr = error?.stderr?.toString?.() ?? "";
     if (stderr.includes("E404") || stderr.includes("Not found")) {
@@ -161,7 +194,21 @@ function normalizeVersionInput(version) {
   if (typeof version !== "string") {
     throw new Error("Version must be a string");
   }
-  return version.startsWith("v") ? version.slice(1) : version;
+  const normalized = version.startsWith("v") ? version.slice(1) : version;
+  const legacyFourSegment = normalized.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!legacyFourSegment) {
+    return normalized;
+  }
+  const [, majorRaw, minorRaw, patchRaw, revisionRaw] = legacyFourSegment;
+  const major = Number(majorRaw);
+  const minor = Number(minorRaw);
+  const patch = Number(patchRaw);
+  const revision = Number(revisionRaw);
+  const semver = `${major}.${minor}.${patch}-${revision}`;
+  console.warn(
+    `[release-all] "${normalized}" is not npm semver, normalized to "${semver}" for publish.`
+  );
+  return semver;
 }
 
 function ensureVersionGreaterThanPublished(pkgName, version) {
@@ -293,13 +340,13 @@ try {
     run("pnpm -F @openclaw-china/qqbot build");
     run("pnpm -F @openclaw-china/channels build");
 
-    run("npm publish --access public", path.join(root, "packages", "shared"));
-    run("npm publish --access public", path.join(root, "extensions", "dingtalk"));
-    run("npm publish --access public", path.join(root, "extensions", "feishu"));
-    run("npm publish --access public", path.join(root, "extensions", "wecom"));
-    run("npm publish --access public", path.join(root, "extensions", "wecom-app"));
-    run("npm publish --access public", path.join(root, "extensions", "qqbot"));
-    run("npm publish --access public", path.join(root, "packages", "channels"));
+    publishPackage(path.join(root, "packages", "shared"), options.tag);
+    publishPackage(path.join(root, "extensions", "dingtalk"), options.tag);
+    publishPackage(path.join(root, "extensions", "feishu"), options.tag);
+    publishPackage(path.join(root, "extensions", "wecom"), options.tag);
+    publishPackage(path.join(root, "extensions", "wecom-app"), options.tag);
+    publishPackage(path.join(root, "extensions", "qqbot"), options.tag);
+    publishPackage(path.join(root, "packages", "channels"), options.tag);
   } else {
     if (!channelMap[options.channel]) {
       throw new Error(
@@ -366,10 +413,10 @@ try {
     run("pnpm -F @openclaw-china/channels build");
 
     if (options.withShared) {
-      run("npm publish --access public", path.join(root, "packages", "shared"));
+      publishPackage(path.join(root, "packages", "shared"), options.tag);
     }
-    run("npm publish --access public", targetDir);
-    run("npm publish --access public", path.join(root, "packages", "channels"));
+    publishPackage(targetDir, options.tag);
+    publishPackage(path.join(root, "packages", "channels"), options.tag);
   }
 } finally {
   // Restore workspace dependencies for local development
