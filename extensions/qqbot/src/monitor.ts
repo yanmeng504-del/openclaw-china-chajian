@@ -246,7 +246,7 @@ export async function monitorQQBotProvider(opts: MonitorQQBotOpts = {}): Promise
         case 9:
           conn.sessionId = null;
           conn.lastSeq = null;
-          clearTokenCache();
+          clearTokenCache(qqCfg.appId as string);
           cleanupSocket(conn);
           scheduleReconnect("invalid session");
           return;

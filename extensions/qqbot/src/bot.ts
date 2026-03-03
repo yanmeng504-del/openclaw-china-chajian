@@ -1086,7 +1086,7 @@ export async function handleQQBotDispatch(params: DispatchParams): Promise<void>
       attachments: inbound.attachments,
     })
   );
-  logger.info(`[inbound-user] senderId=${inbound.senderId} content=${inboundLogContent}`);
+  logger.info(`[inbound-user] accountId=${accountId} senderId=${inbound.senderId} content=${inboundLogContent}`);
 
   if (!shouldHandleMessage(inbound, qqCfg, logger)) {
     return;
