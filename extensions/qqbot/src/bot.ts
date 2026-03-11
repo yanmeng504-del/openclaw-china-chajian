@@ -710,7 +710,8 @@ const VOICE_EMOTION_TAG_RE =
 const TTS_LIKE_RAW_TEXT_RE =
   /\[\[\s*(?:tts(?::text)?|\/tts(?::text)?|audio_as_voice|reply_to_current|reply_to\s*:)/i;
 const MARKDOWN_TABLE_SEPARATOR_RE = /^\|?(?:\s*:?-{3,}:?\s*\|)+(?:\s*:?-{3,}:?)?\|?$/;
-const MARKDOWN_FENCE_RE = /```(?:markdown|md)?\s*\n([\s\S]*?)\n```/gi;
+const EXPLICIT_MARKDOWN_FENCE_RE = /(^|\n)(`{3,}|~{3,})\s*(?:markdown|md)\s*\n([\s\S]*?)\n\2(?=\n|$)/gi;
+const GENERIC_MARKDOWN_FENCE_RE = /(^|\n)(`{3,}|~{3,})\s*\n([\s\S]*?)\n\2(?=\n|$)/g;
 
 function extractFinalBlocks(text: string): string | undefined {
   const matches = Array.from(text.matchAll(FINAL_BLOCK_RE));
@@ -870,20 +871,37 @@ export function appendQQBotBufferedText(bufferedTexts: string[], nextText: strin
 export function normalizeQQBotRenderedMarkdown(text: string): string {
   if (!text.trim()) return "";
 
+  let next = text.trim();
   let changed = false;
-  const unwrapped = text.replace(MARKDOWN_FENCE_RE, (block, inner: string) => {
-    const normalizedInner = inner.trim();
-    if (!normalizedInner) {
-      return block;
-    }
-    if (!hasQQBotMarkdownTable(normalizedInner)) {
-      return block;
-    }
-    changed = true;
-    return normalizedInner;
-  });
 
-  return changed ? unwrapped.trim() : text.trim();
+  next = next.replace(
+    EXPLICIT_MARKDOWN_FENCE_RE,
+    (block, leadingLineBreak: string, _fence: string, inner: string) => {
+      const normalizedInner = inner.trim();
+      if (!normalizedInner) {
+        return block;
+      }
+      changed = true;
+      return `${leadingLineBreak}${normalizedInner}`;
+    }
+  );
+
+  next = next.replace(
+    GENERIC_MARKDOWN_FENCE_RE,
+    (block, leadingLineBreak: string, _fence: string, inner: string) => {
+      const normalizedInner = inner.trim();
+      if (!normalizedInner) {
+        return block;
+      }
+      if (!hasQQBotMarkdownTable(normalizedInner)) {
+        return block;
+      }
+      changed = true;
+      return `${leadingLineBreak}${normalizedInner}`;
+    }
+  );
+
+  return changed ? next.trim() : text.trim();
 }
 
 export async function sendQQBotMediaWithFallback(params: {

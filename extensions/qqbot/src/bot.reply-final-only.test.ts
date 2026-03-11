@@ -192,6 +192,21 @@ describe("appendQQBotBufferedText", () => {
 });
 
 describe("normalizeQQBotRenderedMarkdown", () => {
+  it("unwraps explicit markdown fences so non-table markdown can render", () => {
+    const text = "```markdown\n# 标题\n\n这是 `行内代码`\n\n> 引用\n\n---\n```";
+    expect(normalizeQQBotRenderedMarkdown(text)).toBe(
+      "# 标题\n\n这是 `行内代码`\n\n> 引用\n\n---"
+    );
+  });
+
+  it("unwraps explicit markdown fences with nested code blocks when outer fence is longer", () => {
+    const text =
+      "````markdown\n# 标题\n\n```ts\nconst answer = 42;\n```\n\n| col1 | col2 |\n| --- | --- |\n| a | b |\n````";
+    expect(normalizeQQBotRenderedMarkdown(text)).toBe(
+      "# 标题\n\n```ts\nconst answer = 42;\n```\n\n| col1 | col2 |\n| --- | --- |\n| a | b |"
+    );
+  });
+
   it("unwraps markdown fences around tables", () => {
     const text = "下面是表格：\n\n```markdown\n| col1 | col2 |\n| --- | --- |\n| a | b |\n```";
     expect(normalizeQQBotRenderedMarkdown(text)).toBe(
@@ -200,7 +215,7 @@ describe("normalizeQQBotRenderedMarkdown", () => {
   });
 
   it("keeps non-table fenced code blocks unchanged", () => {
-    const text = "```markdown\n# title\n- item\n```";
+    const text = "```ts\nconsole.log('hello');\n```";
     expect(normalizeQQBotRenderedMarkdown(text)).toBe(text);
   });
 });
