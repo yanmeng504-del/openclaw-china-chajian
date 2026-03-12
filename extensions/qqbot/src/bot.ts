@@ -62,22 +62,13 @@ type QQBotAgentRoute = {
   accountId: string;
   agentId?: string;
   mainSessionKey?: string;
-  effectiveSessionKey?: string;
 };
 
 const sessionDispatchQueue = new Map<string, Promise<void>>();
 
-function resolveQQBotRouteSessionKey(route: QQBotAgentRoute): string {
-  const effectiveSessionKey = route.effectiveSessionKey?.trim();
-  if (effectiveSessionKey) {
-    return effectiveSessionKey;
-  }
-  return route.sessionKey;
-}
-
 function buildSessionDispatchQueueKey(route: QQBotAgentRoute): string {
   const accountId = route.accountId?.trim() || DEFAULT_ACCOUNT_ID;
-  return `${accountId}:${resolveQQBotRouteSessionKey(route)}`;
+  return `${accountId}:${route.sessionKey}`;
 }
 
 function normalizeQQBotSessionKeyPart(value: string): string {
@@ -1204,7 +1195,6 @@ async function dispatchToAgent(params: {
 }): Promise<void> {
   const { inbound, cfg, qqCfg, accountId, logger, route } = params;
   const runtime = getQQBotRuntime();
-  const routeSessionKey = resolveQQBotRouteSessionKey(route);
   const target = resolveChatTarget(inbound);
   if (inbound.c2cOpenid) {
     const typing = await qqbotOutbound.sendTyping({
@@ -1273,7 +1263,7 @@ async function dispatchToAgent(params: {
     const envelopeOptions = replyApi.resolveEnvelopeFormatOptions?.(cfg);
     const previousTimestamp =
       storePath && sessionApi?.readSessionUpdatedAt
-        ? sessionApi.readSessionUpdatedAt({ storePath, sessionKey: routeSessionKey })
+        ? sessionApi.readSessionUpdatedAt({ storePath, sessionKey: route.sessionKey })
         : null;
     const resolvedAttachmentResult = await resolveInboundAttachmentsForAgent({
       attachments: inbound.attachments,
@@ -1336,7 +1326,7 @@ async function dispatchToAgent(params: {
 
     const inboundCtx = buildInboundContext({
       event: inbound,
-      sessionKey: routeSessionKey,
+      sessionKey: route.sessionKey,
       accountId: route.accountId ?? accountId,
       body: inboundBody,
       rawBody,
@@ -1390,7 +1380,7 @@ async function dispatchToAgent(params: {
         const recordSessionKey =
           typeof finalCtx.SessionKey === "string" && finalCtx.SessionKey.trim()
             ? finalCtx.SessionKey
-            : routeSessionKey;
+            : route.sessionKey;
 
         await sessionApi.recordInboundSession({
           storePath,
@@ -1446,17 +1436,25 @@ async function dispatchToAgent(params: {
       bufferedC2CMarkdownMediaUrls.push(next);
     };
 
-    const sendC2CMarkdownTransportPayload = async (params: {
-      text: string;
-      mediaUrls: string[];
-      phase: "immediate" | "buffered";
-    }): Promise<void> => {
-      if (!useC2CMarkdownTransport) {
+    const flushBufferedC2CMarkdownReply = async (): Promise<void> => {
+      if (
+        !useC2CMarkdownTransport ||
+        (bufferedC2CMarkdownTexts.length === 0 && bufferedC2CMarkdownMediaUrls.length === 0)
+      ) {
+        bufferedC2CMarkdownTexts = [];
+        bufferedC2CMarkdownMediaUrls = [];
+        bufferedC2CMarkdownMediaSeen.clear();
         return;
       }
 
-      const normalizedCombinedText = normalizeQQBotRenderedMarkdown(params.text.trim());
-      const { markdownImageUrls, mediaQueue } = splitQQBotMarkdownTransportMediaUrls(params.mediaUrls);
+      const combinedText = bufferedC2CMarkdownTexts.join("\n\n").trim();
+      const combinedMediaUrls = [...bufferedC2CMarkdownMediaUrls];
+      bufferedC2CMarkdownTexts = [];
+      bufferedC2CMarkdownMediaUrls = [];
+      bufferedC2CMarkdownMediaSeen.clear();
+
+      const normalizedCombinedText = normalizeQQBotRenderedMarkdown(combinedText);
+      const { markdownImageUrls, mediaQueue } = splitQQBotMarkdownTransportMediaUrls(combinedMediaUrls);
       const finalMarkdownText = await normalizeQQBotMarkdownImages({
         text: normalizedCombinedText,
         appendImageUrls: markdownImageUrls,
@@ -1476,7 +1474,7 @@ async function dispatchToAgent(params: {
       logger.info(
         `delivery=${deliveryLabel} to=${target.to} segments=${textSegments.length} media=${mediaQueue.length} ` +
           `replyToId=${textReplyRefs.replyToId ? "yes" : "no"} replyEventId=${textReplyRefs.replyEventId ? "yes" : "no"} ` +
-          `phase=${params.phase} tableMode=${String(resolvedTableMode)} chunkMode=${String(chunkMode ?? "default")}`
+          `tableMode=${String(resolvedTableMode)} chunkMode=${String(chunkMode ?? "default")}`
       );
 
       await sendQQBotMediaWithFallback({
@@ -1505,8 +1503,7 @@ async function dispatchToAgent(params: {
           const chunk = chunks[chunkIndex] ?? "";
           logger.info(
             `delivery=${deliveryLabel} segment=${segmentIndex + 1}/${textSegments.length} ` +
-              `chunk=${chunkIndex + 1}/${chunks.length} phase=${params.phase} ` +
-              `preview=${formatQQBotOutboundPreview(chunk)}`
+              `chunk=${chunkIndex + 1}/${chunks.length} preview=${formatQQBotOutboundPreview(chunk)}`
           );
           const result = await qqbotOutbound.sendText({
             cfg: { channels: { qqbot: qqCfg } },
@@ -1516,38 +1513,14 @@ async function dispatchToAgent(params: {
             replyEventId: textReplyRefs.replyEventId,
           });
           if (result.error) {
-            logger.error(`send QQ markdown reply failed: ${result.error}`);
+            logger.error(`send buffered QQ markdown reply failed: ${result.error}`);
             markGroupMessageInterfaceBlocked(result.error);
           } else {
-            logger.info(`sent QQ markdown reply (phase=${params.phase}, len=${chunk.length})`);
+            logger.info(`sent buffered QQ markdown reply (len=${chunk.length})`);
             markReplyDelivered();
           }
         }
       }
-    };
-
-    const flushBufferedC2CMarkdownReply = async (): Promise<void> => {
-      if (
-        !useC2CMarkdownTransport ||
-        (bufferedC2CMarkdownTexts.length === 0 && bufferedC2CMarkdownMediaUrls.length === 0)
-      ) {
-        bufferedC2CMarkdownTexts = [];
-        bufferedC2CMarkdownMediaUrls = [];
-        bufferedC2CMarkdownMediaSeen.clear();
-        return;
-      }
-
-      const combinedText = bufferedC2CMarkdownTexts.join("\n\n").trim();
-      const combinedMediaUrls = [...bufferedC2CMarkdownMediaUrls];
-      bufferedC2CMarkdownTexts = [];
-      bufferedC2CMarkdownMediaUrls = [];
-      bufferedC2CMarkdownMediaSeen.clear();
-
-      await sendC2CMarkdownTransportPayload({
-        text: combinedText,
-        mediaUrls: combinedMediaUrls,
-        phase: "buffered",
-      });
     };
 
     const deliver = async (payload: unknown, info?: { kind?: string }): Promise<void> => {
@@ -1593,24 +1566,13 @@ async function dispatchToAgent(params: {
       const textToSend = suppressText ? "" : cleanedText;
 
       if (useC2CMarkdownTransport) {
-        const shouldBufferFinalOnlyPayload = replyFinalOnly && (!info?.kind || info.kind === "final");
-
-        if (shouldBufferFinalOnlyPayload) {
-          if (textToSend) {
-            bufferedC2CMarkdownTexts = appendQQBotBufferedText(bufferedC2CMarkdownTexts, textToSend);
-          }
-
-          for (const url of mediaQueue) {
-            bufferC2CMarkdownMedia(url);
-          }
-          return;
+        if (textToSend) {
+          bufferedC2CMarkdownTexts = appendQQBotBufferedText(bufferedC2CMarkdownTexts, textToSend);
         }
 
-        await sendC2CMarkdownTransportPayload({
-          text: textToSend,
-          mediaUrls: mediaQueue,
-          phase: "immediate",
-        });
+        for (const url of mediaQueue) {
+          bufferC2CMarkdownMedia(url);
+        }
         return;
       }
 
@@ -1861,7 +1823,7 @@ export async function handleQQBotDispatch(params: DispatchParams): Promise<void>
         };
   const queueKey = buildSessionDispatchQueueKey(resolvedRoute);
   if (sessionDispatchQueue.has(queueKey)) {
-    logger.info(`session busy; queueing inbound dispatch sessionKey=${resolveQQBotRouteSessionKey(resolvedRoute)}`);
+    logger.info(`session busy; queueing inbound dispatch sessionKey=${route.sessionKey}`);
   }
 
   await runSerializedSessionDispatch(queueKey, async () =>
@@ -1871,7 +1833,7 @@ export async function handleQQBotDispatch(params: DispatchParams): Promise<void>
       qqCfg,
       accountId,
       logger,
-      route: resolvedRoute,
+      route,
     })
   );
 }
