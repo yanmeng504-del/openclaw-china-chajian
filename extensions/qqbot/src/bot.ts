@@ -589,6 +589,18 @@ function resolveAgentBodyBase(ctx: InboundContext): string {
   return "";
 }
 
+function uniqueRefIndexKeys(...values: Array<string | undefined>): string[] {
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const next = value?.trim();
+    if (!next || seen.has(next)) continue;
+    seen.add(next);
+    keys.push(next);
+  }
+  return keys;
+}
+
 function resolveInboundLogContent(params: {
   content: string;
   attachments?: QQInboundAttachment[];
@@ -1438,21 +1450,30 @@ async function dispatchToAgent(params: {
       if (refEntry) {
         replyToBody = formatRefEntryForAgent(refEntry);
         replyToSender = refEntry.senderName ?? refEntry.senderId;
+        logger.info(`quote context resolved refMsgIdx=${inbound.refMsgIdx}`);
       } else {
         replyToBody = QQ_QUOTE_BODY_UNAVAILABLE_TEXT;
+        logger.warn(`quote context missing refMsgIdx=${inbound.refMsgIdx}`);
       }
     }
 
     const refAttachmentSummaries = buildInboundRefAttachmentSummaries(resolvedAttachments);
-    const currentMsgIdx = inbound.c2cOpenid ? inbound.msgIdx ?? typingRefIdx : undefined;
-    if (currentMsgIdx) {
-      setRefIndex(currentMsgIdx, {
-        content: inbound.content,
-        senderId: inbound.senderId,
-        ...(inbound.senderName ? { senderName: inbound.senderName } : {}),
-        timestamp: inbound.timestamp,
-        ...(refAttachmentSummaries ? { attachments: refAttachmentSummaries } : {}),
-      });
+    const currentRefIndexKeys = inbound.c2cOpenid
+      ? uniqueRefIndexKeys(inbound.msgIdx, typingRefIdx)
+      : [];
+    if (currentRefIndexKeys.length > 0) {
+      for (const currentRefIndexKey of currentRefIndexKeys) {
+        setRefIndex(currentRefIndexKey, {
+          content: inbound.content,
+          senderId: inbound.senderId,
+          ...(inbound.senderName ? { senderName: inbound.senderName } : {}),
+          timestamp: inbound.timestamp,
+          ...(refAttachmentSummaries ? { attachments: refAttachmentSummaries } : {}),
+        });
+      }
+      logger.info(
+        `cached inbound ref_idx keys=${currentRefIndexKeys.join(",")} msgIdx=${inbound.msgIdx ?? "-"} typingRefIdx=${typingRefIdx ?? "-"}`
+      );
     }
     const rawBody = buildInboundContentWithAttachments({
       content: inbound.content,
@@ -1516,7 +1537,7 @@ async function dispatchToAgent(params: {
           : false;
     if (!isSlashCommand) {
       let agentBody = resolveAgentBodyBase(finalCtx);
-      if (replyToIsQuote && replyToBody) {
+      if (replyToIsQuote && replyToBody && replyToBody !== QQ_QUOTE_BODY_UNAVAILABLE_TEXT) {
         agentBody = buildQuotedAgentBody({
           baseBody: agentBody,
           replyToBody,

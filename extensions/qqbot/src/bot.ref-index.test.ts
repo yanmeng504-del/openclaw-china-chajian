@@ -181,6 +181,46 @@ describe("QQBot ref-index quote context", () => {
     );
   });
 
+  it("stores both msg_idx and typing refIdx when both are present", async () => {
+    installRuntime();
+    const logger = createLogger();
+
+    await handleQQBotDispatch({
+      eventType: "C2C_MESSAGE_CREATE",
+      eventData: {
+        id: "msg-ref-both-1",
+        event_id: "evt-ref-both-1",
+        content: "双索引缓存",
+        timestamp: 1700000002500,
+        message_scene: {
+          ext: ["msg_idx=REFIDX-scene-1"],
+        },
+        author: {
+          user_openid: "u-ref-both-1",
+          username: "Both",
+        },
+      },
+      cfg: baseCfg,
+      accountId: "default",
+      logger,
+    });
+
+    expect(refIndexMocks.setRefIndex).toHaveBeenNthCalledWith(
+      1,
+      "REFIDX-scene-1",
+      expect.objectContaining({
+        content: "双索引缓存",
+      })
+    );
+    expect(refIndexMocks.setRefIndex).toHaveBeenNthCalledWith(
+      2,
+      "REFIDX-typing-1",
+      expect.objectContaining({
+        content: "双索引缓存",
+      })
+    );
+  });
+
   it("uses a placeholder quote body when ref-index lookup misses", async () => {
     refIndexMocks.getRefIndex.mockReturnValue(null);
     const runtime = installRuntime();
@@ -210,8 +250,8 @@ describe("QQBot ref-index quote context", () => {
     expect(ctx.ReplyToId).toBe("REFIDX-missing-1");
     expect(ctx.ReplyToBody).toBe("原始内容不可用");
     expect(ctx.ReplyToIsQuote).toBe(true);
-    expect(ctx.BodyForAgent).toContain("[引用消息开始]");
-    expect(ctx.BodyForAgent).toContain("原始内容不可用");
+    expect(ctx.BodyForAgent).not.toContain("[引用消息开始]");
+    expect(ctx.BodyForAgent).not.toContain("原始内容不可用");
     expect(refIndexMocks.formatRefEntryForAgent).not.toHaveBeenCalled();
   });
 

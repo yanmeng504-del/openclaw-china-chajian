@@ -264,6 +264,9 @@ function recordOutboundC2CRefIndex(params: {
       isBot: true,
       ...(attachments ? { attachments } : {}),
     });
+    console.info(
+      `[qqbot] cached outbound ref_idx=${refIdx} accountId=${accountLabel} textLen=${text.length} media=${params.mediaUrl?.trim() ? "yes" : "no"}`
+    );
   } catch (err) {
     console.warn(`[qqbot] failed to cache outbound ref_idx=${refIdx}: ${String(err)}`);
   }
