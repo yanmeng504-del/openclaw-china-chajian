@@ -9,10 +9,12 @@ import { dispatchWecomMessage } from "./bot.js";
 import { fetchAndSaveWecomDocMcpConfig } from "./mcp-config.js";
 import { tryGetWecomRuntime } from "./runtime.js";
 import {
+  WECOM_WS_THINKING_MESSAGE,
   appendWecomWsActiveStreamChunk,
   appendWecomWsActiveStreamReply,
   bindWecomWsRouteContext,
   clearWecomWsReplyContextsForAccount,
+  markWecomWsMessageContextSkipped,
   registerWecomWsEventContext,
   registerWecomWsMessageContext,
   scheduleWecomWsMessageContextFinish,
@@ -504,7 +506,7 @@ export async function startWecomWsGateway(opts: StartWecomWsGatewayOptions): Pro
             void sendWecomWsMessagePlaceholder({
               accountId: account.accountId,
               reqId: callback.reqId,
-              content: "⏳",
+              content: WECOM_WS_THINKING_MESSAGE,
             }).catch((err) => {
               logger.warn(`wecom ws placeholder ack failed: ${String(err)}`);
             });
@@ -515,6 +517,13 @@ export async function startWecomWsGateway(opts: StartWecomWsGatewayOptions): Pro
               reqId: callback.reqId,
               sessionKey: context.sessionKey,
               runId: context.runId,
+            });
+          },
+          onSkip: (info) => {
+            markWecomWsMessageContextSkipped({
+              accountId: account.accountId,
+              reqId: callback.reqId,
+              reason: info.reason,
             });
           },
           onChunk: async (text) => {

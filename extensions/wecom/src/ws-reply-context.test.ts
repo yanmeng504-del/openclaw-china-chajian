@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  WECOM_WS_FINISH_FALLBACK_MESSAGE,
+  WECOM_WS_THINKING_MESSAGE,
   appendWecomWsActiveStreamChunk,
   appendWecomWsActiveStreamReply,
   bindWecomWsRouteContext,
   clearWecomWsReplyContextsForAccount,
   consumeWecomWsPendingAutoImagePaths,
   finishWecomWsMessageContext,
+  markWecomWsMessageContextSkipped,
   registerWecomWsEventContext,
   registerWecomWsMessageContext,
   registerWecomWsPendingAutoImagePaths,
@@ -204,7 +207,7 @@ describe("wecom ws reply context", () => {
       sendWecomWsMessagePlaceholder({
         accountId: "acc-1",
         reqId: "req-placeholder",
-        content: "⏳",
+        content: WECOM_WS_THINKING_MESSAGE,
       })
     ).resolves.toBe(true);
 
@@ -227,7 +230,7 @@ describe("wecom ws reply context", () => {
         stream: {
           id: "stream-placeholder",
           finish: false,
-          content: "⏳",
+          content: WECOM_WS_THINKING_MESSAGE,
         },
       },
     });
@@ -249,6 +252,104 @@ describe("wecom ws reply context", () => {
         },
       },
     });
+  });
+
+  it("replaces the thinking placeholder with a visible finish message when no real chunk arrives", async () => {
+    const sent: unknown[] = [];
+    registerWecomWsMessageContext({
+      accountId: "acc-1",
+      reqId: "req-thinking-only",
+      to: "user:alice",
+      send: async (frame) => {
+        sent.push(frame);
+      },
+      streamId: "stream-thinking-only",
+    });
+
+    await expect(
+      sendWecomWsMessagePlaceholder({
+        accountId: "acc-1",
+        reqId: "req-thinking-only",
+        content: WECOM_WS_THINKING_MESSAGE,
+      })
+    ).resolves.toBe(true);
+
+    await finishWecomWsMessageContext({
+      accountId: "acc-1",
+      reqId: "req-thinking-only",
+    });
+
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toMatchObject({
+      body: {
+        stream: {
+          id: "stream-thinking-only",
+          finish: false,
+          content: WECOM_WS_THINKING_MESSAGE,
+        },
+      },
+    });
+    expect(sent[1]).toMatchObject({
+      body: {
+        stream: {
+          id: "stream-thinking-only",
+          finish: true,
+          content: WECOM_WS_FINISH_FALLBACK_MESSAGE,
+        },
+      },
+    });
+  });
+
+  it("closes the thinking stream without a visible finish message when the reply was skipped", async () => {
+    const sent: Array<{ body?: { stream?: { id?: string; finish?: boolean; content?: string } } }> = [];
+    registerWecomWsMessageContext({
+      accountId: "acc-1",
+      reqId: "req-skip-only",
+      to: "user:alice",
+      send: async (frame) => {
+        sent.push(frame as { body?: { stream?: { id?: string; finish?: boolean; content?: string } } });
+      },
+      streamId: "stream-skip-only",
+    });
+
+    await expect(
+      sendWecomWsMessagePlaceholder({
+        accountId: "acc-1",
+        reqId: "req-skip-only",
+        content: WECOM_WS_THINKING_MESSAGE,
+      })
+    ).resolves.toBe(true);
+
+    markWecomWsMessageContextSkipped({
+      accountId: "acc-1",
+      reqId: "req-skip-only",
+      reason: "silent",
+    });
+
+    await finishWecomWsMessageContext({
+      accountId: "acc-1",
+      reqId: "req-skip-only",
+    });
+
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toMatchObject({
+      body: {
+        stream: {
+          id: "stream-skip-only",
+          finish: false,
+          content: WECOM_WS_THINKING_MESSAGE,
+        },
+      },
+    });
+    expect(sent[1]).toMatchObject({
+      body: {
+        stream: {
+          id: "stream-skip-only",
+          finish: true,
+        },
+      },
+    });
+    expect(sent[1].body?.stream?.content).toBeUndefined();
   });
 
   it("stores image msg items and emits them only on the final frame", async () => {
